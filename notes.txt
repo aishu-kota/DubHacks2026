@@ -1,0 +1,16 @@
+Base app outline:
+
+    Add/save emergency contacts
+    User picks a timer for when they want to check in
+    App sends a notification to user to check in once timer runs out
+    If user clicks on notification (with a pin or password!), either: timer just restarts or session ends
+    If user doesn’t click on notification, app sends message (through Twilio?)  to emergency contacts
+    User can set a timer for how long until the app should send message to emergency contacts (grace period)
+    If feasible, implement a notification (notify user before sending alert to contact)
+    User should be able to end mid-session
+    “I’m safe” button that user can send if emergency messages went out
+
+
+
+Additional features:
+    If user doesn’t click on notification, app also sends user location to emergency contacts
