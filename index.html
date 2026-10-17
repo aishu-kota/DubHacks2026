@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#12251f">
+  <title>Safely — Check-in</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="script.js" defer></script>
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="#" aria-label="Safely home">
+      <span class="brand-mark" aria-hidden="true">✓</span>
+      <span>Safely</span>
+    </a>
+    <span class="demo-pill"><span class="status-dot"></span> DEMO MODE</span>
+  </header>
+
+  <main class="app-shell">
+    <section class="intro" aria-labelledby="page-title">
+      <p class="eyebrow">A LITTLE PEACE OF MIND</p>
+      <h1 id="page-title">Your check-in.<br><span>Your pace.</span></h1>
+      <p class="intro-copy">Set a check-in timer for your journey. If you miss it, Safely will walk you through a reminder and demonstrate how a trusted-contact alert could work.</p>
+    </section>
+
+    <section class="panel setup-panel" id="setup-panel" aria-labelledby="setup-title">
+      <div class="panel-heading">
+        <div>
+          <p class="step-label">STEP 01</p>
+          <h2 id="setup-title">Set up your check-in</h2>
+        </div>
+        <span class="heading-icon" aria-hidden="true">↗</span>
+      </div>
+
+      <form id="setup-form">
+        <label for="display-name">What should we call you? <span class="optional">(optional)</span></label>
+        <input id="display-name" name="displayName" type="text" maxlength="40" placeholder="Your name or nickname" autocomplete="off">
+
+        <label for="interval">Check in every</label>
+        <select id="interval" name="interval">
+          <option value="20">20 seconds — quick demo</option>
+          <option value="60">1 minute</option>
+          <option value="300" selected>5 minutes</option>
+          <option value="900">15 minutes</option>
+          <option value="1800">30 minutes</option>
+        </select>
+        <p class="field-hint">For the live demo, choose 20 seconds to see the full flow quickly.</p>
+
+        <label for="contact-name">Trusted contact label <span class="optional">(optional)</span></label>
+        <input id="contact-name" name="contactName" type="text" maxlength="40" placeholder="e.g. Roommate" autocomplete="off">
+
+        <button class="button button-primary button-full" type="submit">Start check-in <span aria-hidden="true">→</span></button>
+      </form>
+      <p class="privacy-note"><span aria-hidden="true">◇</span> Demo only: details stay in this page and are not sent anywhere.</p>
+    </section>
+
+    <section class="panel session-panel" id="session-panel" aria-labelledby="session-title" hidden>
+      <div class="panel-heading">
+        <div>
+          <p class="step-label" id="session-step">SESSION ACTIVE</p>
+          <h2 id="session-title">You're on your way.</h2>
+        </div>
+        <span class="live-indicator"><span class="status-dot"></span> Active</span>
+      </div>
+
+      <p class="greeting" id="greeting">Your next check-in is coming up.</p>
+
+      <div class="timer-card" id="timer-card">
+        <p class="timer-caption" id="timer-caption">TIME UNTIL CHECK-IN</p>
+        <p class="timer-value" id="timer-value" role="timer" aria-live="off">05:00</p>
+        <p class="timer-subtext" id="timer-subtext">Tap the button when you're safe.</p>
+        <div class="progress-track" aria-hidden="true"><div class="progress-fill" id="progress-fill"></div></div>
+      </div>
+
+      <div class="status-message" id="status-message" role="status" aria-live="polite">Your check-in timer is running.</div>
+
+      <button class="button button-primary button-full" id="safe-button" type="button">✓ &nbsp; I'm safe</button>
+      <button class="button button-secondary button-full" id="stop-button" type="button">End demo session</button>
+      <p class="session-footnote">Keep this page open for the demo. Browsers may pause timers in background tabs.</p>
+    </section>
+
+    <section class="panel alert-panel" id="alert-panel" aria-labelledby="alert-title" hidden>
+      <div class="alert-symbol" aria-hidden="true">!</div>
+      <p class="step-label">DEMO ALERT</p>
+      <h2 id="alert-title">Check-in missed</h2>
+      <p class="alert-copy" id="alert-copy">We didn't receive a check-in. This demo will show a reminder before simulating a contact alert.</p>
+
+      <div class="grace-card" id="grace-card">
+        <p class="timer-caption">TIME TO RESPOND</p>
+        <p class="timer-value" id="grace-value" role="timer" aria-live="polite">00:20</p>
+        <p class="timer-subtext">If you're okay, check in now to reset your session.</p>
+      </div>
+
+      <button class="button button-primary button-full" id="grace-safe-button" type="button">I'm safe — reset timer</button>
+      <button class="button button-secondary button-full" id="show-alert-button" type="button">Skip to simulated alert</button>
+      <p class="privacy-note">No real alert will be sent. Silence alone does not prove someone is in danger.</p>
+    </section>
+
+    <section class="panel simulated-panel" id="simulated-panel" aria-labelledby="simulated-title" hidden>
+      <div class="success-icon" aria-hidden="true">↗</div>
+      <p class="step-label">SIMULATION COMPLETE</p>
+      <h2 id="simulated-title">Here's what an alert could look like.</h2>
+      <div class="notification-preview">
+        <div class="notification-top"><span class="notification-app">SAFELY · DEMO</span><span>Now</span></div>
+        <p class="notification-title" id="notification-title">A check-in was missed</p>
+        <p class="notification-body" id="notification-body">This is a simulated message for your trusted contact. No location or message was sent.</p>
+      </div>
+      <p class="demo-disclaimer"><strong>Important:</strong> This is a prototype, not a monitored safety service. It does not contact anyone, access your location, or call emergency services.</p>
+      <button class="button button-primary button-full" id="restart-button" type="button">Start another demo</button>
+    </section>
+
+    <section class="how-it-works" aria-labelledby="how-title">
+      <p class="eyebrow">SIMPLE BY DESIGN</p>
+      <h2 id="how-title">How it works</h2>
+      <div class="how-grid">
+        <article class="how-item"><span class="how-number">01</span><h3>Set a timer</h3><p>Choose how often you'd like to check in.</p></article>
+        <article class="how-item"><span class="how-number">02</span><h3>Confirm you're safe</h3><p>Tap the check-in button to reset the countdown.</p></article>
+        <article class="how-item"><span class="how-number">03</span><h3>See the reminder flow</h3><p>A missed check-in leads to a grace period and simulated alert.</p></article>
+      </div>
+    </section>
+
+    <aside class="safety-note">
+      <strong>Prototype, not emergency monitoring.</strong>
+      <p>This demo does not send messages, share GPS location, or contact emergency services. For immediate danger, contact local emergency services directly when you can.</p>
+    </aside>
+  </main>
+
+  <footer class="site-footer"><span>Safely · Hackathon prototype</span><span>Built for a demo, with privacy in mind.</span></footer>
+</body>
+</html>
