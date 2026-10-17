@@ -14,3 +14,21 @@ Base app outline:
 
 Additional features:
     If user doesn’t click on notification, app also sends user location to emergency contacts
+
+
+Cursor AI explanation of each file:
+
+File	What it is
+index.html	The page. The words, buttons, and boxes.
+style.css	How the page looks. Colors, size, spacing.
+script.js	What the page does while it is open. Save contacts, show the countdown, ask for the PIN, get the location.
+server.js	The helper that stays awake. Watches the clock and sends the texts. Runs with Node.
+package.json	A shopping list of tools the helper needs, including the Twilio tool.
+.env	The secret Twilio password. Stays on your laptop.
+.env.example	The same list of secrets, with the blanks empty, so teammates know what to fill in.
+.gitignore	A list of files Git should not upload, like .env and installed tools.
+README.md	Instructions for your team: what this is and how to start it.
+notes.txt	Your spec. Scratch paper for the idea.
+
+
+
