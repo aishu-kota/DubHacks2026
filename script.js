@@ -978,110 +978,24 @@ function tick() {
         save();
         ping("Time to check in", "Enter your PIN on Safely. If you don't, your contacts will be texted.");
       }
-    } else if (session.phase === "grace" && session.graceDeadline && clock >= session.graceDeadline) {
-      fireAlert();
-    } else if (session.phase === "grace" && session.graceDeadline && session.graceSec >= 45 && session.graceDeadline - clock <= 15_000 && soonFor !== session.graceDeadline) {
-      soonFor = session.graceDeadline;
-      ping("Contacts will be texted in a few seconds", "Enter your PIN now if you're safe.");
+    } else if (mode === "grace") {
+      const remaining = Math.max(0, (graceDeadline - Date.now()) / 1000);
+      graceValue.textContent = formatTime(remaining);
+      if (remaining <= 0) {
+        showSimulatedAlert();
+      }
     }
   }
-  if (state.session || flow) render();
-}
 
-function fireAlert() {
-  const session = state.session;
-  if (!session || alertLockFor === session.checkInDeadline) return;
-  if (session.phase === "alerted" || session.phase === "resolved") return;
-  alertLockFor = session.checkInDeadline;
-  const people = consented(state.contacts);
-  session.phase = "alerted";
-  session.alert = {
-    at: Date.now(),
-    when: formatWhen(),
-    point: state.location,
-    count: people.length,
-  };
-  save();
-  const msg = alertMessage(clipName(state.displayName) || "Someone", session.alert.when, state.location);
-  if (live() && people.length) {
-    sendSms(people.map((c) => c.phone), msg)
-      .then(() => toast("Alert texted to consented contacts."))
-      .catch((err) => toast(err.message || "Alert text failed."));
-    ping("Alert sent", `Texted ${people.length} contact${people.length === 1 ? "" : "s"}.`);
-  } else {
-    ping("Alert ready", people.length ? `Would text ${people.length} consented contact${people.length === 1 ? "" : "s"}.` : "No consented contacts yet.");
+  function endSession() {
+    clearTicker();
+    mode = "setup";
+    deadline = null;
+    graceDeadline = null;
+    showOnly(setupPanel);
   }
-  render();
-}
 
-function ping(title, body) {
-  if (soundOn) chime();
-  if (navigator.vibrate) navigator.vibrate([80, 40, 80]);
-  if ("Notification" in window && Notification.permission === "granted") {
-    try { new Notification(title, { body }); } catch { /* ignore */ }
-  }
-}
-
-function chime() {
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const o = ctx.createOscillator();
-    const g = ctx.createGain();
-    o.type = "sine";
-    o.frequency.value = 660;
-    g.gain.value = 0.04;
-    o.connect(g);
-    g.connect(ctx.destination);
-    o.start();
-    o.stop(ctx.currentTime + 0.18);
-  } catch { /* ignore */ }
-}
-
-function watchLocation(on) {
-  if (geoWatch != null) {
-    navigator.geolocation?.clearWatch(geoWatch);
-    geoWatch = null;
-  }
-  if (!on || !navigator.geolocation) {
-    if (on) state.locationStatus = "unavailable";
-    return;
-  }
-  geoWatch = navigator.geolocation.watchPosition(
-    (pos) => {
-      state.location = {
-        lat: Math.round(pos.coords.latitude * 1e5) / 1e5,
-        lng: Math.round(pos.coords.longitude * 1e5) / 1e5,
-        accuracy: pos.coords.accuracy,
-        at: pos.timestamp,
-      };
-      state.locationStatus = "ok";
-      save();
-    },
-    (err) => {
-      state.locationStatus = err.code === err.PERMISSION_DENIED ? "denied" : "unavailable";
-      save();
-    },
-    { enableHighAccuracy: true, maximumAge: 15000, timeout: 12000 },
-  );
-}
-
-async function requestWake() {
-  try {
-    wakeLock = await navigator.wakeLock?.request("screen");
-  } catch { /* ignore */ }
-}
-
-document.addEventListener("visibilitychange", () => {
-  now = Date.now();
-  if (document.visibilityState === "visible" && state.session && (state.session.phase === "active" || state.session.phase === "grace")) {
-    requestWake();
-    watchLocation(true);
-  }
-});
-
-window.addEventListener("keydown", (event) => {
-  if (!flow || (flow.kind === "checkin" && flow.step === "choice")) return;
-  if (event.key >= "0" && event.key <= "9") {
+  setupForm.addEventListener("submit", (event) => {
     event.preventDefault();
     pushDigit(event.key);
     pinError = null;
