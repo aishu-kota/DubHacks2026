@@ -38,7 +38,9 @@ let pinStep = "enter";
 let shake = false;
 let noteTimer = null;
 let textbeeStatus = "idle";
-let textbeeError = "";
+let textbeeDevice = "";
+let textbeeDeviceId = "";
+let replyNote = "";
 let polling = false;
 
 const $app = document.getElementById("app");
@@ -123,7 +125,7 @@ function mapsLink(point) {
 }
 
 function consentMessage(userName) {
-  return `${userName} added you as an emergency contact on Safely. Do you consent to having your contact info here? Reply YES or NO.`;
+  return `${userName} added you as an emergency contact on Safely. Do you consent to having your contact info here? Reply YES to opt in or NO to reject.`;
 }
 
 function alertMessage(userName, when, point) {
@@ -181,18 +183,13 @@ function live() {
 }
 
 async function textbee(path, options = {}) {
-  const response = await fetch(TEXTBEE + path, {
-    ...options,
-    headers: {
-      "x-api-key": state.textbeeKey,
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
-  });
+  const headers = { "x-api-key": state.textbeeKey, ...(options.headers || {}) };
+  if (options.body) headers["Content-Type"] = "application/json";
+  const response = await fetch(TEXTBEE + path, { ...options, headers });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const msg = data.message || data.error || ("TextBee " + response.status);
-    throw new Error(msg);
+    throw new Error(typeof msg === "string" ? msg : "TextBee " + response.status);
   }
   return data;
 }
@@ -201,6 +198,7 @@ async function testTextbee() {
   if (!state.textbeeKey) {
     textbeeStatus = "idle";
     textbeeError = "";
+    textbeeDevice = "";
     return;
   }
   textbeeStatus = "checking";
@@ -210,10 +208,22 @@ async function testTextbee() {
     await textbee("/gateway/stats");
     textbeeStatus = "ok";
     textbeeError = "";
-    toast("TextBee connected. Texts will send from your phone.");
+    try {
+      const devices = await textbee("/gateway/devices");
+      const list = Array.isArray(devices.data) ? devices.data : Array.isArray(devices) ? devices : [];
+      const online = list.find((d) => d.enabled) || list[0];
+      textbeeDevice = online ? (online.name || online.model || "your phone") : "";
+      textbeeDeviceId = online ? (online._id || online.id || "") : "";
+    } catch {
+      textbeeDevice = "";
+      textbeeDeviceId = "";
+    }
+    toast(textbeeDevice ? `TextBee connected. Texts send from ${textbeeDevice} to any number.` : "TextBee connected. Texts send from your phone.");
+    void pollReplies();
   } catch (err) {
     textbeeStatus = "error";
     textbeeError = err.message || "Couldn't reach TextBee.";
+    textbeeDevice = "";
   }
   render();
 }
@@ -226,32 +236,119 @@ async function sendSms(recipients, message) {
   });
 }
 
+function samePhone(a, b) {
+  const da = String(a || "").replace(/\D/g, "");
+  const db = String(b || "").replace(/\D/g, "");
+  if (da.length < 7 || db.length < 7) return false;
+  const n = Math.min(10, da.length, db.length);
+  return da.slice(-n) === db.slice(-n);
+}
+
+function messageText(row) {
+  return String(row?.message || row?.body || row?.text || row?.content || "");
+}
+
+function messageSender(row) {
+  const raw = row?.sender ?? row?.from ?? row?.address ?? row?.phoneNumber ?? "";
+  if (raw && typeof raw === "object") return String(raw.phone || raw.number || raw.address || "");
+  return String(raw);
+}
+
+function messageTime(row) {
+  const raw = row?.receivedAt ?? row?.receivedAtInMillis ?? row?.createdAt ?? row?.date ?? 0;
+  if (typeof raw === "number") return raw < 1e12 ? raw * 1000 : raw;
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function rowsFrom(res) {
+  if (Array.isArray(res)) return res;
+  if (Array.isArray(res?.data)) return res.data;
+  if (Array.isArray(res?.data?.data)) return res.data.data;
+  if (Array.isArray(res?.data?.messages)) return res.data.messages;
+  if (Array.isArray(res?.messages)) return res.messages;
+  if (Array.isArray(res?.data?.sms)) return res.data.sms;
+  return [];
+}
+
+async function loadInbox() {
+  const chunks = [];
+  let error = "";
+  try {
+    chunks.push(...rowsFrom(await textbee("/gateway/messages?direction=received&limit=50")));
+  } catch (err) {
+    error = err.message || "Couldn't read replies.";
+  }
+  if (!chunks.length && textbeeDeviceId) {
+    try {
+      chunks.push(...rowsFrom(await textbee("/gateway/devices/" + textbeeDeviceId + "/get-received-sms?limit=50")));
+    } catch (err) {
+      error = error || err.message || "Couldn't read replies.";
+    }
+  }
+  if (!chunks.length) {
+    try {
+      const all = rowsFrom(await textbee("/gateway/messages?limit=50"));
+      chunks.push(...all.filter((row) => {
+        const dir = String(row.direction || row.type || "").toLowerCase();
+        return dir === "received" || dir === "inbound" || (!dir && messageSender(row));
+      }));
+    } catch (err) {
+      error = error || err.message || "Couldn't read replies.";
+    }
+  }
+  if (!chunks.length && error) throw new Error(error);
+  return chunks;
+}
+
 async function pollReplies() {
   if (!live() || polling) return;
-  const pending = state.contacts.filter((c) => c.consent === "pending");
-  if (!pending.length) return;
+  const asked = state.contacts.filter((c) => c.phone && c.consentRequestedAt && c.consent !== "unsent");
+  if (!asked.length) return;
   polling = true;
   try {
-    const res = await textbee("/gateway/messages?direction=received&limit=30");
-    const rows = Array.isArray(res.data) ? res.data : [];
+    const previousNote = replyNote;
+    const rows = await loadInbox();
+    const ordered = [...asked].sort((a, b) => a.consentRequestedAt - b.consentRequestedAt);
     let changed = false;
-    for (const contact of pending) {
-      const since = contact.consentRequestedAt || 0;
-      const match = rows.find((row) => {
-        const sender = normalizePhone(row.sender || "") || row.sender;
-        const at = Date.parse(row.receivedAt || row.createdAt || 0);
-        return sender === contact.phone && (!since || !at || at >= since - 5000);
+    for (const contact of ordered) {
+      const next = ordered.find((other) => other.consentRequestedAt > contact.consentRequestedAt);
+      const start = contact.consentRequestedAt - 2 * 60 * 1000;
+      const end = next ? next.consentRequestedAt : Infinity;
+      const replies = rows.filter((row) => {
+        const verdict = classifyReply(messageText(row));
+        if (verdict !== "yes" && verdict !== "no") return false;
+        const at = messageTime(row);
+        const ownNumber = samePhone(messageSender(row), contact.phone);
+        if (ownNumber) return !at || at >= start;
+        if (!at || at < start || at >= end) return false;
+        return !ordered.some((other) => other !== contact && samePhone(messageSender(row), other.phone));
       });
-      if (!match) continue;
-      const verdict = classifyReply(match.message || "");
-      if (verdict === "yes" || verdict === "no") {
+      replies.sort((a, b) => messageTime(b) - messageTime(a));
+      const match = replies[0];
+      if (!match) {
+        if (contact.consent === "yes" && rows.length) {
+          contact.consent = "pending";
+          changed = true;
+          replyNote = `Waiting for a YES or NO from ${formatPhone(contact.phone)}. Another contact's reply does not count.`;
+        } else if (contact.consent === "pending") {
+          replyNote = `Waiting for a YES or NO from ${formatPhone(contact.phone)}.`;
+        }
+        continue;
+      }
+      const verdict = classifyReply(messageText(match));
+      if (contact.consent !== verdict) {
         contact.consent = verdict;
         changed = true;
+        replyNote = "";
+        toast(verdict === "yes" ? `${contact.name} opted in.` : `${contact.name} declined and will not be texted.`);
       }
     }
     if (changed) save();
-  } catch {
-    /* keep waiting */
+    else if (replyNote !== previousNote) render();
+  } catch (err) {
+    replyNote = err.message || "Couldn't check replies.";
+    render();
   } finally {
     polling = false;
   }
@@ -297,7 +394,7 @@ function render() {
         <div class="brand">${ICONS.shield}<span>Safely</span></div>
         <div class="header-actions">
           <button class="icon-btn" id="sound-btn" aria-label="${soundOn ? "Turn chime off" : "Turn chime on"}">${soundOn ? ICONS.volume : ICONS.mute}</button>
-          <span class="pill"><span class="dot ${isLive ? "live" : ""}"></span>${isLive ? "TextBee" : textbeeStatus === "checking" ? "Checking" : "Rehearsal"}</span>
+          <span class="pill"><span class="dot ${isLive ? "live" : ""}"></span>${isLive ? "TextBee live" : textbeeStatus === "checking" ? "Checking" : "Not connected"}</span>
         </div>
       </header>
       <main class="main">
@@ -331,9 +428,7 @@ function homeView(canStart, isLive) {
   if (!clipName(state.displayName)) blocker = "Add your name to start.";
   else if (!state.pin) blocker = "Create a PIN so a stolen phone can't cancel this.";
   else if (!state.contacts.length) blocker = "Add at least one contact.";
-  else if (!consentedCount) blocker = isLive
-    ? "You can start, but texts wait until someone replies YES."
-    : "Record a YES on a contact if you want the rehearsal alert to name someone.";
+  else if (!consentedCount) blocker = "Waiting for a contact to reply YES by text.";
 
   return `
     <section class="hero">
@@ -368,14 +463,14 @@ function homeView(canStart, isLive) {
         <p class="eyebrow">Your circle</p>
         <h2>People who can be texted</h2>
         <p class="hint" style="margin:8px 0 12px">${isLive
-          ? "Adding someone texts them an ask from your TextBee phone. Safely only alerts numbers that reply YES."
-          : "Paste a TextBee API key below to send real texts from your Android phone. Or record YES / NO yourself in rehearsal."}</p>
+          ? "Adding a friend texts their real number from your Android phone. Their phone can be any kind. They reply YES to opt in or NO to reject."
+          : "Paste your TextBee API key and connect. Then add your friend's number — the consent text goes to her, not a practice reply."}</p>
         ${textbeeCard()}
         ${contactsForm()}
         ${contactList()}
         <details style="margin-top:16px">
           <summary>How TextBee works</summary>
-          <p class="hint">Create a free account at textbee.dev, install the Android app on a phone with a SIM, and create an API key. Paste it here. It stays in this browser only — don't publish a page that has a key saved. Turn on Receive SMS in the TextBee app so YES / NO replies come back.</p>
+          <p class="hint">Texts send through TextBee, from your Android phone's number, to any mobile number. Your friend's phone does not need the app. Turn on Receive SMS in the TextBee app so her YES or NO comes back. The key stays in this browser only.</p>
         </details>
       </section>
     </div>
@@ -398,7 +493,7 @@ function textbeeCard() {
         <button class="btn secondary" type="submit">${state.textbeeKey ? "Update key" : "Connect"}</button>
         ${state.textbeeKey ? `<button class="btn quiet" type="button" id="clear-key">Disconnect</button>` : ""}
       </div>
-      <p class="faint">${textbeeStatus === "ok" ? "Connected. Texts send from your registered phone." : textbeeStatus === "error" ? esc(textbeeError) : "Key is stored in this browser only."}</p>
+      <p class="faint">${textbeeStatus === "ok" ? `Connected${textbeeDevice ? ` to ${esc(textbeeDevice)}` : ""}. Real texts go to the number you add.` : textbeeStatus === "error" ? esc(textbeeError) : "Paste your TextBee API key. Not Twilio."}</p>
     </form>
   `;
 }
@@ -410,7 +505,7 @@ function contactsForm() {
       <input id="contact-name" class="field" maxlength="70" placeholder="Maya Chen" autocomplete="off">
       <label for="contact-phone">Mobile number</label>
       <input id="contact-phone" class="field" inputmode="tel" placeholder="+1 206 555 0100" autocomplete="off">
-      <button class="btn primary" type="submit">Add and ask</button>
+      <button class="btn primary" type="submit">Add and text consent</button>
       <p class="faint" id="contact-error"></p>
     </form>
   `;
@@ -423,14 +518,13 @@ function contactList() {
       <div>
         <h3>${esc(c.name)}</h3>
         <p class="hint">${esc(formatPhone(c.phone))}</p>
-        <span class="badge ${c.consent}">${c.consent === "yes" ? "Consented" : c.consent === "no" ? "Declined" : c.consent === "pending" ? "Waiting" : "Not asked"}</span>
+        <span class="badge ${c.consent}">${c.consent === "yes" ? "Consented" : c.consent === "no" ? "Declined" : c.consent === "pending" ? "Waiting for SMS" : "Not asked"}</span>
       </div>
       <div class="contact-actions">
-        ${c.consent === "pending" || c.consent === "unsent" ? `<button class="btn secondary small" data-yes="${c.id}">YES</button><button class="btn secondary small" data-no="${c.id}">NO</button>` : ""}
         <button class="btn quiet small" data-del="${c.id}">Remove</button>
       </div>
     </div>
-    ${c.consent === "pending" ? `<div class="msg">${esc(consentMessage(clipName(state.displayName) || "Someone"))}</div>` : ""}
+        ${c.consent === "pending" ? `<p class="hint" style="margin-top:8px">${esc(replyNote || "Waiting for her text. Replies are checked every few seconds.")}</p><button class="btn secondary small check-replies" type="button" style="margin-top:8px">Check for her reply</button>` : ""}
   `).join("");
 }
 
@@ -630,9 +724,12 @@ function bind() {
     }
   });
 
-  document.getElementById("add-contact")?.addEventListener("submit", onAddContact);
-  document.querySelectorAll("[data-yes]").forEach((btn) => btn.addEventListener("click", () => setConsent(btn.dataset.yes, "yes")));
-  document.querySelectorAll("[data-no]").forEach((btn) => btn.addEventListener("click", () => setConsent(btn.dataset.no, "no")));
+  document.querySelectorAll(".check-replies").forEach((btn) => btn.addEventListener("click", () => {
+    replyNote = "Checking TextBee…";
+    render();
+    void pollReplies();
+  }));
+  document.querySelectorAll("#add-contact").forEach((form) => form.addEventListener("submit", onAddContact));
   document.querySelectorAll("[data-del]").forEach((btn) => btn.addEventListener("click", () => {
     state.contacts = state.contacts.filter((c) => c.id !== btn.dataset.del);
     save();
@@ -691,13 +788,15 @@ function pushDigit(n) {
 
 async function onAddContact(event) {
   event.preventDefault();
-  const name = clipName(document.getElementById("contact-name").value);
-  const phone = normalizePhone(document.getElementById("contact-phone").value);
-  const err = document.getElementById("contact-error");
+  const form = event.currentTarget;
+  const name = clipName(form.querySelector("#contact-name, [data-field=name]")?.value || "");
+  const phone = normalizePhone(form.querySelector("#contact-phone, [data-field=phone]")?.value || "");
+  const err = form.querySelector("#contact-error, [data-field=error]");
   if (!name) return setErr(err, "Add their name.");
   if (!phone) return setErr(err, "Use a real mobile number, with country code if it's outside the US.");
   if (state.contacts.some((c) => c.phone === phone)) return setErr(err, "That number is already in your circle.");
   if (state.contacts.length >= 5) return setErr(err, "Safely texts up to five people.");
+  if (!live()) return setErr(err, "Connect TextBee first so the consent text can be sent.");
   const contact = {
     id: crypto.randomUUID(),
     name,
@@ -707,32 +806,19 @@ async function onAddContact(event) {
   };
   state.contacts.push(contact);
   save();
-  if (live()) {
-    try {
-      await sendSms([phone], consentMessage(clipName(state.displayName) || "Someone"));
-      toast("Consent text sent. Waiting for YES or NO.");
-    } catch (err) {
-      contact.consent = "unsent";
-      save();
-      toast(err.message || "Couldn't send the ask.");
-    }
-  } else {
-    toast("Consent ask ready. Record YES or NO.");
+  try {
+    await sendSms([phone], consentMessage(clipName(state.displayName) || "Someone"));
+    toast(`Consent text sent to ${formatPhone(phone)}. She replies YES or NO on her phone.`);
+  } catch (err) {
+    contact.consent = "unsent";
+    save();
+    toast(err.message || "Couldn't send the ask.");
   }
   render();
 }
 
 function setErr(node, text) {
   if (node) node.textContent = text;
-}
-
-function setConsent(id, value) {
-  const c = state.contacts.find((item) => item.id === id);
-  if (!c) return;
-  c.consent = value;
-  save();
-  toast(value === "yes" ? `${c.name} consented.` : `${c.name} declined.`);
-  render();
 }
 
 async function start() {
@@ -879,7 +965,6 @@ async function submitPin(value) {
 
 function tick() {
   now = Date.now();
-  if (now % 8000 < 300) void pollReplies();
   const session = state.session;
   if (session && (session.phase === "active" || session.phase === "grace")) {
     const clock = now;
@@ -1021,3 +1106,4 @@ if (state.session && (state.session.phase === "active" || state.session.phase ==
 if (state.textbeeKey) void testTextbee();
 else render();
 setInterval(tick, 250);
+setInterval(() => { void pollReplies(); }, 4000);
